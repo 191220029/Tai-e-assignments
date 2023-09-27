@@ -26,6 +26,7 @@ import pascal.taie.analysis.dataflow.analysis.DataflowAnalysis;
 import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.dataflow.fact.SetFact;
 import pascal.taie.analysis.graph.cfg.CFG;
+import pascal.taie.ir.stmt.Stmt;
 
 import java.util.LinkedList;
 import java.util.Queue;
@@ -44,30 +45,28 @@ class IterativeSolver<Node, Fact> extends Solver<Node, Fact> {
     @Override
     protected void doSolveBackward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
         // TODO - finish me
-        // while(IN[B] changes)
-        //      for(each B except exit)
-        //          OUT[B] = UsIN[S]
-        //          IN[B] = useB U (OUT[B] - defB)
-        //          // ! reverse execution order needed !
-
-        var ref = new Object() {
-            boolean changes = true;
-        };
-
-        while(ref.changes) {
-            ref.changes = false;
-            cfg.forEach(node -> {
-                if (!node.equals(cfg.getExit())) {
-                    // IN[B] = useB U (OUT[B] - defB)
-                    ref.changes |= analysis.transferNode(node, result.getInFact(node), result.getOutFact(node));
-
-                    // OUT[B] = UsIN[S]
-                    // ! Due to the reversion of execution order, s becomes preds of B.
-                    cfg.getPredsOf(node).forEach(s -> {
-                        analysis.meetInto(result.getInFact(node), result.getOutFact(s));
-                    });
+        Queue<Node> WL = new LinkedList<Node>();
+        var inListSet = new SetFact<Node>();
+        for(var node:cfg.getNodes()){
+            if (node.equals(cfg.getExit())){
+                continue;
+            }
+            WL.add(node);
+            inListSet.add(node);
+        }
+        while(!WL.isEmpty()){
+            var node = WL.remove();
+            inListSet.remove(node);
+            var change = analysis.transferNode(node, result.getInFact(node), result.getOutFact(node));
+            if (change){
+                for(var nxtNode:cfg.getPredsOf(node)){
+                    analysis.meetInto(result.getInFact(node), result.getOutFact(nxtNode));
+                    if(!inListSet.contains(nxtNode)){
+                        inListSet.contains(nxtNode);
+                        WL.add(nxtNode);
+                    }
                 }
-            });
+            }
         }
     }
 }
