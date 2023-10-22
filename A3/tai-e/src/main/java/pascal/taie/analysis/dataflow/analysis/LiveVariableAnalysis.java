@@ -48,23 +48,47 @@ public class LiveVariableAnalysis extends
     @Override
     public SetFact<Var> newBoundaryFact(CFG<Stmt> cfg) {
         // TODO - finish me
-        return null;
+        return new SetFact<>();
     }
 
     @Override
     public SetFact<Var> newInitialFact() {
         // TODO - finish me
-        return null;
+        return new SetFact<>();
     }
 
     @Override
     public void meetInto(SetFact<Var> fact, SetFact<Var> target) {
         // TODO - finish me
+        target.union(fact);
     }
 
     @Override
     public boolean transferNode(Stmt stmt, SetFact<Var> in, SetFact<Var> out) {
         // TODO - finish me
-        return false;
+        // IN[B] = useB U (OUT[B] - defB)
+
+        SetFact<Var> new_in = new SetFact<Var>();
+        new_in.set(out);
+        // 1. If defB defines a valid Var, Then do OUT[B] - defB
+        if (stmt.getDef().isPresent() && stmt.getDef().get() instanceof Var) {
+            new_in.remove((Var) stmt.getDef().get());
+        }
+
+        // 2. do useB U (OUT[B] - defB)
+        //    Add v to new_in if v in useB and v is typeof Var
+        stmt.getUses().forEach(rValue -> {
+            if (rValue instanceof Var) {
+                new_in.add((Var) rValue);
+            }
+        });
+
+        // 3. If new_in equals IN[B], return false;
+        //    else do IN[B] = useB U (OUT[B] - defB), return true;
+        if (new_in.equals(in)) {
+            return false;
+        }
+        in.set(new_in);
+        return true;
     }
 }

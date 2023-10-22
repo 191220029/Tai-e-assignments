@@ -25,6 +25,7 @@ package pascal.taie.analysis.dataflow.analysis;
 import pascal.taie.analysis.MethodAnalysis;
 import pascal.taie.analysis.dataflow.analysis.constprop.CPFact;
 import pascal.taie.analysis.dataflow.analysis.constprop.ConstantPropagation;
+import pascal.taie.analysis.dataflow.analysis.constprop.Value;
 import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.dataflow.fact.SetFact;
 import pascal.taie.analysis.graph.cfg.CFG;
@@ -45,7 +46,6 @@ import pascal.taie.ir.stmt.Stmt;
 import pascal.taie.ir.stmt.SwitchStmt;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DeadCodeDetection extends MethodAnalysis {
 
@@ -70,98 +70,90 @@ public class DeadCodeDetection extends MethodAnalysis {
         // TODO - finish me
         // Your task is to recognize dead code in ir and add it to deadCode
 
-        // Collect all livecode in current cfg, then we have deadcode = all \ (livecode + exit).
-        Set<Stmt> live_code = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
+        // Calculate livecode first.
+        Set<Stmt> liveCode = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
 
-        Queue<Stmt> stmt_queue = new LinkedList<>();
-        stmt_queue.add(cfg.getEntry());
+        Queue<Stmt> queue = new LinkedList<>();
+        queue.add(cfg.getEntry());
 
-        while(!stmt_queue.isEmpty()){
-            var stmt = stmt_queue.poll();
+        while(!queue.isEmpty()){
+            Stmt stmt = queue.poll();
 
             // Assignment statements with dead left value but has no side effect shall be eliminated.
-            // If not, go to check all its successors.
             if (stmt instanceof AssignStmt<?,?> assignStmt && assignStmt.getLValue() instanceof Var var) {
                 if(!liveVars.getResult(stmt).contains(var) && hasNoSideEffect(assignStmt.getRValue())) {
-                    stmt_queue.addAll(cfg.getSuccsOf(stmt));
+                    queue.addAll(cfg.getSuccsOf(stmt));
                     continue;
                 }
             }
 
             // If such statement is not dead, then mark it as live code.
-            // If such statement is already marked as live, skip this stmt.
-            if(!live_code.add(stmt)) {
+            if(!liveCode.add(stmt)) {
                 continue;
             }
 
-            // Check code in if clauses.
+            // Try to find dead code in if clauses.
             if (stmt instanceof If ifStmt) {
-                // Try to evaluate condition's result if it is a constant.
                 var cond = ConstantPropagation.evaluate(
                         ifStmt.getCondition(),
                         constants.getInFact(stmt)
                 );
 
                 if (cond.isConstant()) {
-                    // Check inner code if any branch is reachable.
+                    // Try to find inner dead code if any branch is reachable.
                     cfg.getOutEdgesOf(stmt).forEach(
                             stmtEdge -> {
                                 if (
                                         (stmtEdge.getKind() == Edge.Kind.IF_TRUE && cond.getConstant() == 1)
                                         || (stmtEdge.getKind() == Edge.Kind.IF_FALSE && cond.getConstant() == 0)
                                 ) {
-                                    stmt_queue.add(stmtEdge.getTarget());
+                                    queue.add(stmtEdge.getTarget());
                                 }
                             }
                     );
                 }
-                // Check all branches when condition is NAC.
+                // Try to find dead code in all branches when condition is NAC.
                 else {
-                    stmt_queue.addAll(cfg.getSuccsOf(stmt));
+                    queue.addAll(cfg.getSuccsOf(stmt));
                 }
             }
 
-            // Check code in switch-case clauses.
+            // Try to find dead code in switch-case clauses.
             else if (stmt instanceof SwitchStmt switchStmt) {
-                var switch_cond = ConstantPropagation.evaluate(
-                        switchStmt.getVar(),
-                        constants.getInFact(stmt)
-                );
+                var switch_cond = ConstantPropagation.evaluate(switchStmt.getVar(), constants.getInFact(stmt));
 
-                // When switch_cond is constant, go to check code in all reachable cases.
+                // When switch_cond is constant, try to find dead code in all reachable cases.
                 if (switch_cond.isConstant()) {
-                    AtomicBoolean has_live_case = new AtomicBoolean(false);
-                    switchStmt.getCaseTargets().forEach(
-                            case_target -> {
-                                if (case_target.first() == switch_cond.getConstant()){
-                                    stmt_queue.add(case_target.second());
-                                    has_live_case.set(true);
-                                }
-                            }
-                    );
+                    boolean has_case_hit = false;
+                    for(var case_target : switchStmt.getCaseTargets()){
+                        if (case_target.first() == switch_cond.getConstant()){
+                            queue.add(case_target.second());
+                            has_case_hit = true;
+                        }
+                    }
 
                     // When all cases are unreachable, go to check default case.
-                    if (!has_live_case.get()) {
-                        stmt_queue.add(switchStmt.getDefaultTarget());
+                    if (!has_case_hit) {
+                        queue.add(switchStmt.getDefaultTarget());
                     }
                 }
-                // When switch_cond is NAC, all cases will be marked as live, and try to find live code in all cases.
+                // When switch_cond is NAC, try to find dead code in all cases.
                 else
                 {
-                    stmt_queue.addAll(cfg.getSuccsOf(stmt));
+                    queue.addAll(cfg.getSuccsOf(stmt));
                 }
             }
 
-            // For other cases of stmt, mark them as live and go to check all successors.
+            // For other cases of stmt, go to check all successors.
             else {
-                stmt_queue.addAll(cfg.getSuccsOf(stmt));
+                queue.addAll(cfg.getSuccsOf(stmt));
             }
         }
 
         // deadcode = all \ (live + exit)
         deadCode.addAll(cfg.getNodes());
+        deadCode.removeAll(liveCode);
         deadCode.remove(cfg.getExit());
-        deadCode.removeAll(live_code);
 
         return deadCode;
     }
